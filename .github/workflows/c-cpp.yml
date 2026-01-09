@@ -8,6 +8,9 @@ on:
   pull_request:
     branches: [ "main" ]
 
+env:
+  APP_NAME: fun-calculator
+
 jobs:
 # =========================
 # LINUX BUILD + PACKAGING
@@ -18,38 +21,27 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install dependencies
+    - name: Install compiler & tools
       run: |
         sudo apt update
-        sudo apt install -y \
-          build-essential \
-          autotools-dev \
-          autoconf \
-          fakeroot \
-          dpkg-dev \
-          rpm
+        sudo apt install -y g++ dpkg-dev rpm
 
-    - name: Configure
-      run: ./configure
-
-    - name: Build
-      run: make -j$(nproc)
-
-    - name: Run tests
-      run: make check || true
-
-    - name: Install to staging directory
+    - name: Build binary
       run: |
-        make DESTDIR=$PWD/pkgroot install
+        g++ -std=c++17 main.cpp -O2 -o $APP_NAME
 
     # ---------- DEB ----------
     - name: Build .deb package
       run: |
-        mkdir -p pkgroot/DEBIAN
         VERSION=${GITHUB_REF_NAME#v}
 
-        cat <<EOF > pkgroot/DEBIAN/control
-        Package: myapp
+        mkdir -p pkg/DEBIAN
+        mkdir -p pkg/usr/bin
+
+        cp $APP_NAME pkg/usr/bin/
+
+        cat <<EOF > pkg/DEBIAN/control
+        Package: $APP_NAME
         Version: $VERSION
         Section: utils
         Priority: optional
@@ -58,7 +50,7 @@ jobs:
         Description: Fun C++ terminal calculator
         EOF
 
-        dpkg-deb --build pkgroot myapp_${VERSION}_amd64.deb
+        dpkg-deb --build pkg ${APP_NAME}_${VERSION}_amd64.deb
 
     # ---------- RPM ----------
     - name: Build .rpm package
@@ -66,48 +58,42 @@ jobs:
         VERSION=${GITHUB_REF_NAME#v}
         mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
-        tar czf rpmbuild/SOURCES/myapp-$VERSION.tar.gz .
+        mkdir -p src/$APP_NAME-$VERSION
+        cp $APP_NAME src/$APP_NAME-$VERSION/
 
-        cat <<EOF > rpmbuild/SPECS/myapp.spec
-        Name: myapp
+        tar czf rpmbuild/SOURCES/$APP_NAME-$VERSION.tar.gz -C src .
+
+        cat <<EOF > rpmbuild/SPECS/$APP_NAME.spec
+        Name: $APP_NAME
         Version: $VERSION
         Release: 1
         Summary: Fun C++ terminal calculator
         License: MIT
 
         %description
-        Fun C++ terminal calculator.
+        Fun C++ terminal calculator
 
         %prep
         %setup -q
 
-        %build
-        ./configure
-        make
-
         %install
-        make DESTDIR=%{buildroot} install
+        mkdir -p %{buildroot}/usr/bin
+        cp $APP_NAME %{buildroot}/usr/bin/
 
         %files
-        /
-
-        %changelog
-        * $(date +"%a %b %d %Y") You <you@example.com>
-        - Release $VERSION
+        /usr/bin/$APP_NAME
         EOF
 
-        rpmbuild --define "_topdir $PWD/rpmbuild" -bb rpmbuild/SPECS/myapp.spec
+        rpmbuild --define "_topdir $PWD/rpmbuild" -bb rpmbuild/SPECS/$APP_NAME.spec
         cp rpmbuild/RPMS/x86_64/*.rpm .
 
-    - name: Package artifacts
-      run: |
-        mkdir artifacts
-        cp *.deb *.rpm artifacts/
-
-    - uses: actions/upload-artifact@v4
+    - name: Upload Linux artifacts
+      uses: actions/upload-artifact@v4
       with:
         name: linux-packages
-        path: artifacts/
+        path: |
+          *.deb
+          *.rpm
 
 # =========================
 # WINDOWS BUILD
@@ -118,15 +104,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Build (MinGW)
+    - name: Build (MSVC)
       run: |
-        choco install mingw -y
-        gcc main.cpp -o myapp.exe
+        cl /std:c++17 main.cpp /O2 /Fe:fun-calculator.exe
 
     - name: Package
       run: |
         mkdir artifacts
-        copy myapp.exe artifacts\
+        copy fun-calculator.exe artifacts\
 
     - uses: actions/upload-artifact@v4
       with:
@@ -142,18 +127,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install tools
-      run: brew install autoconf automake
-
-    - name: Configure & Build
+    - name: Build
       run: |
-        ./configure
-        make
+        clang++ -std=c++17 main.cpp -O2 -o fun-calculator
 
     - name: Package
       run: |
         mkdir artifacts
-        tar czf artifacts/myapp-macos.tar.gz myapp
+        tar czf artifacts/fun-calculator-macos.tar.gz fun-calculator
 
     - uses: actions/upload-artifact@v4
       with:
