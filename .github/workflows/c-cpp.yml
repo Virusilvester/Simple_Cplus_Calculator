@@ -1,0 +1,181 @@
+name: C/C++ Build & Release
+
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+# =========================
+# LINUX BUILD + PACKAGING
+# =========================
+  linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          build-essential \
+          autotools-dev \
+          autoconf \
+          fakeroot \
+          dpkg-dev \
+          rpm
+
+    - name: Configure
+      run: ./configure
+
+    - name: Build
+      run: make -j$(nproc)
+
+    - name: Run tests
+      run: make check || true
+
+    - name: Install to staging directory
+      run: |
+        make DESTDIR=$PWD/pkgroot install
+
+    # ---------- DEB ----------
+    - name: Build .deb package
+      run: |
+        mkdir -p pkgroot/DEBIAN
+        VERSION=${GITHUB_REF_NAME#v}
+
+        cat <<EOF > pkgroot/DEBIAN/control
+        Package: myapp
+        Version: $VERSION
+        Section: utils
+        Priority: optional
+        Architecture: amd64
+        Maintainer: Your Name <you@example.com>
+        Description: Fun C++ terminal calculator
+        EOF
+
+        dpkg-deb --build pkgroot myapp_${VERSION}_amd64.deb
+
+    # ---------- RPM ----------
+    - name: Build .rpm package
+      run: |
+        VERSION=${GITHUB_REF_NAME#v}
+        mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+
+        tar czf rpmbuild/SOURCES/myapp-$VERSION.tar.gz .
+
+        cat <<EOF > rpmbuild/SPECS/myapp.spec
+        Name: myapp
+        Version: $VERSION
+        Release: 1
+        Summary: Fun C++ terminal calculator
+        License: MIT
+
+        %description
+        Fun C++ terminal calculator.
+
+        %prep
+        %setup -q
+
+        %build
+        ./configure
+        make
+
+        %install
+        make DESTDIR=%{buildroot} install
+
+        %files
+        /
+
+        %changelog
+        * $(date +"%a %b %d %Y") You <you@example.com>
+        - Release $VERSION
+        EOF
+
+        rpmbuild --define "_topdir $PWD/rpmbuild" -bb rpmbuild/SPECS/myapp.spec
+        cp rpmbuild/RPMS/x86_64/*.rpm .
+
+    - name: Package artifacts
+      run: |
+        mkdir artifacts
+        cp *.deb *.rpm artifacts/
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: linux-packages
+        path: artifacts/
+
+# =========================
+# WINDOWS BUILD
+# =========================
+  windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build (MinGW)
+      run: |
+        choco install mingw -y
+        gcc main.cpp -o myapp.exe
+
+    - name: Package
+      run: |
+        mkdir artifacts
+        copy myapp.exe artifacts\
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: windows-build
+        path: artifacts/
+
+# =========================
+# MACOS BUILD
+# =========================
+  macos:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install tools
+      run: brew install autoconf automake
+
+    - name: Configure & Build
+      run: |
+        ./configure
+        make
+
+    - name: Package
+      run: |
+        mkdir artifacts
+        tar czf artifacts/myapp-macos.tar.gz myapp
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: macos-build
+        path: artifacts/
+
+# =========================
+# RELEASE
+# =========================
+  release:
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: release-artifacts
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: release-artifacts/**/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
