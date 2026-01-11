@@ -30,11 +30,7 @@ jobs:
     - name: Build application
       run: |
         g++ -std=c++17 -O2 -static-libgcc -static-libstdc++ -o ${{ env.APP_NAME }} main.cpp
-        chmod +x ${{ env.APP_NAME }}
-    
-    - name: Test executable
-      run: |
-        ./${{ env.APP_NAME }} --version || echo "Binary created successfully"
+        chmod +x ${{ env.APP_NAME }
     
     - name: Create DEB package structure
       run: |
